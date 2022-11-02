@@ -51,12 +51,10 @@ class Cycle:
             self.D_A.load_state_dict(torch.load(D_A_PATH))
             self.D_B.load_state_dict(torch.load(D_B_PATH))
 
-    def load_dataset(self, TRAIN_DATA_PATH,
-                            TEST_DATA_PATH,
+    def load_train_dataset(self, TRAIN_DATA_PATH,
                             class_to_idx,
                             batch_size=8,
                             train_trans=None,
-                            test_trans=None,
                             shuffle=False,
                             num_workers=0,
                             collate_fn=None,
@@ -69,6 +67,19 @@ class Cycle:
                             num_workers=num_workers,
                             collate_fn=collate_fn,
                             pin_memory=pin_memory)
+        self.class_to_idx = class_to_idx
+        self.idx_to_class = {}
+        for key, value in self.class_to_idx.items():
+                self.idx_to_class[value] = key
+    
+    def load_test_dataset(self, TEST_DATA_PATH,
+                            class_to_idx,
+                            batch_size=8,
+                            test_trans=None,
+                            shuffle=False,
+                            num_workers=0,
+                            collate_fn=None,
+                            pin_memory=False):
         self.Test_Data = DataLoader(MyImageFolder(TEST_DATA_PATH,
                                 class_to_idx=class_to_idx,
                                 transform=test_trans),
@@ -169,11 +180,17 @@ class Cycle:
         We also call loss_D.backward() to calculate the gradients.
         """
         # Real
-        pred_real = netD(real)
-        loss_D_real = self.criterionGAN(pred_real, torch.ones_like(pred_real))
+        if real is not None:
+            pred_real = netD(real)
+            loss_D_real = self.criterionGAN(pred_real, torch.ones_like(pred_real))
+        else:
+            loss_D_real = 0
         # Fake
-        pred_fake = netD(fake.detach())
-        loss_D_fake = self.criterionGAN(pred_fake, torch.zeros_like(pred_fake))
+        if real is not None:
+            pred_fake = netD(fake.detach())
+            loss_D_fake = self.criterionGAN(pred_fake, torch.zeros_like(pred_fake))
+        else:
+            loss_D_fake = 0
         # Combined loss and calculate gradients
         loss_D = (loss_D_real + loss_D_fake) * 0.5
         loss_D.backward()
@@ -325,12 +342,10 @@ trans = transform = T.Compose([
     # normalize
     T.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
 ])
-c.load_dataset('D:\\apple2orange\\train', 
-                'D:\\apple2orange\\test', 
+c.load_train_dataset('../apple2orange/train', 
                 class_to_idx={'B':0, 'A':1},
                 shuffle=False, 
-                train_trans=trans,
-                test_trans=trans)
+                train_trans=trans)
 c.set_loss()
 c.set_optimizer_and_schedulers()
 c.train()
