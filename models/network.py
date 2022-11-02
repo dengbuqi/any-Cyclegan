@@ -40,10 +40,14 @@ class Cycle:
         if is_train:
             self.D_A = D_A.to(device)
             self.D_B = D_B.to(device)
+
+        self.real_A = None
+        self.real_B = None
+        self.fake_A = None
+        self.fake_B = None
         self.is_train = is_train
         self.device = device
 
- 
     def load_model(self, G_AB_PATH, G_BA_PATH, D_A_PATH, D_B_PATH):
         self.G_AB.load_state_dict(torch.load(G_AB_PATH))
         self.G_BA.load_state_dict(torch.load(G_BA_PATH))
@@ -146,7 +150,7 @@ class Cycle:
                 real_A.append(img.to(self.device))
                 real_Idt_A.append(classid.to(self.device))
             else:
-                real_B.append(img.to(self.device), classid)
+                real_B.append(img.to(self.device))
                 real_Idt_B.append(classid.to(self.device))
         if len(real_A):
             self.real_A =  torch.stack(real_A)
@@ -160,9 +164,10 @@ class Cycle:
         else:
             self.real_B = None
             self.real_Idt_B = None
-
+    
     def forward(self):
         """Run forward pass; called by both functions <optimize_parameters> and <test>."""
+
         if self.real_A is not None:
             self.fake_B = self.G_AB(self.real_A)  # G_A(A)
             self.rec_A = self.G_BA(self.fake_B)   # G_B(G_A(A))
@@ -184,15 +189,21 @@ class Cycle:
             pred_real = netD(real)
             loss_D_real = self.criterionGAN(pred_real, torch.ones_like(pred_real))
         else:
-            loss_D_real = 0
+            loss_D_real = None
         # Fake
-        if real is not None:
+        if fake is not None:
             pred_fake = netD(fake.detach())
             loss_D_fake = self.criterionGAN(pred_fake, torch.zeros_like(pred_fake))
         else:
-            loss_D_fake = 0
+            loss_D_fake = None
         # Combined loss and calculate gradients
-        loss_D = (loss_D_real + loss_D_fake) * 0.5
+        if (loss_D_real is not None) and (loss_D_fake is not None):
+            loss_D = (loss_D_real + loss_D_fake) * 0.5
+        else:
+            if loss_D_fake is not None:
+                loss_D = loss_D_fake
+            if loss_D_real is not None:
+                loss_D = loss_D_real
         loss_D.backward()
         return loss_D
 
@@ -281,7 +292,7 @@ class Cycle:
                 self.one_batch_data_preprocess(data)
                 self.optimize_parameters()
                 loss_D_A, loss_D_B, loss_G = self.get_current_loss()
-                tbar.set_description(f'Epochs:{e+1}/{epochs}| D_A={loss_D_A.item():.2f}, loss_D_B={loss_D_B.item():.2f}, loss_G={loss_G.item():.2f}')
+                tbar.set_description(f'Epochs:{e+1}/{epochs}| loss_D_A={loss_D_A.item():.2f}, loss_D_B={loss_D_B.item():.2f}, loss_G={loss_G.item():.2f}')
             for sd in self.schedulers:
                 sd.step()
 
@@ -308,13 +319,13 @@ class Discriminator(nn.Module):
         self.fc2 = nn.Linear(84, 1)
 
     def forward(self, x):
-        x = F.tanh(self.conv1(x))
+        x = torch.tanh(self.conv1(x))
         x = F.avg_pool2d(x, 2, 2)
-        x = F.tanh(self.conv2(x))
+        x = torch.tanh(self.conv2(x))
         x = F.avg_pool2d(x, 2, 2)
-        x = F.tanh(self.conv3(x))
+        x = torch.tanh(self.conv3(x))
         x = x.view(-1, 120*57*57)
-        x = F.tanh(self.fc1(x))
+        x = torch.tanh(self.fc1(x))
         x = self.fc2(x)
         return F.softmax(x, dim=1)
 
@@ -326,15 +337,14 @@ class Generator(nn.Module):
         self.conv3 = nn.Conv2d(16, 3, 3, 1, 1)
 
     def forward(self, x):
-        x = F.tanh(self.conv1(x))
-        x = F.tanh(self.conv2(x))
-        x = F.tanh(self.conv3(x))
-        return F.sigmoid(x)
+        x = torch.tanh(self.conv1(x))
+        x = torch.tanh(self.conv2(x))
+        x = torch.tanh(self.conv3(x))
+        return torch.sigmoid(x)
 
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-c = Cycle(Generator(), Generator(), Discriminator(), Discriminator(), device=device)
-trans = transform = T.Compose([
+trans = T.Compose([
     # resize
     T.Resize((256,256)),
     # to-tensor
@@ -342,10 +352,38 @@ trans = transform = T.Compose([
     # normalize
     T.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
 ])
-c.load_train_dataset('../apple2orange/train', 
-                class_to_idx={'B':0, 'A':1},
-                shuffle=False, 
-                train_trans=trans)
-c.set_loss()
-c.set_optimizer_and_schedulers()
-c.train()
+
+# c = Cycle(Generator(), Generator(), Discriminator(), Discriminator(), device=device)
+
+# c.load_train_dataset('D:\\apple2orange\\train', 
+#                 class_to_idx={'B':0, 'A':1},
+#                 shuffle=True, 
+#                 train_trans=trans)
+# c.set_loss()
+# c.set_optimizer_and_schedulers()
+# c.train(epochs=20)
+# c.save_model()
+
+from PIL import Image
+img_trans = T.ToPILImage()
+
+apple_image = trans(Image.open('D:\\apple2orange\\train\\A\\n07740461_158.jpg')).to(device)
+orange_image = trans(Image.open('D:\\apple2orange\\train\\B\\n07749192_183.jpg')).to(device)
+
+apple_image = apple_image.unsqueeze(0)
+orange_image = orange_image.unsqueeze(0)
+test_G_AB = Generator()
+test_G_BA = Generator()
+
+test_G_AB.load_state_dict(torch.load('.\\G_AB.pt'))
+test_G_BA.load_state_dict(torch.load('.\\G_BA.pt'))
+test_G_AB.to(device)
+test_G_BA.to(device)
+
+fake_orange_image = test_G_AB(apple_image).squeeze()
+fake_orange_image = img_trans(fake_orange_image)
+fake_orange_image.save('./fake_orange.jpg')
+
+fake_apple_image = test_G_BA(orange_image).squeeze()
+fake_apple_image = img_trans(fake_apple_image)
+fake_apple_image.save('./fake_apple.jpg')
