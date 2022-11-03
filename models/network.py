@@ -307,42 +307,28 @@ class Cycle:
             torch.save(self.D_B.state_dict(), D_B_PATH)
 
 
+from torchvision import models
 
-import torch.nn.functional as F
 class Discriminator(nn.Module):
     def __init__(self):
         super(Discriminator,self).__init__()
-        self.conv1 = nn.Conv2d(3, 6, kernel_size=5, stride=1)
-        self.conv2 = nn.Conv2d(6, 16, kernel_size=5, stride=1)
-        self.conv3 = nn.Conv2d(16, 120, kernel_size=5, stride=1)
-        self.fc1 = nn.Linear(120*57*57, 84)
-        self.fc2 = nn.Linear(84, 1)
+        self.model = models.resnet18(weights=None)#weights=models.ResNet18_Weights.DEFAULT)
+        self.model.fc = torch.nn.Linear(self.model.fc.in_features, 1)
         self.sig = nn.Sigmoid()
-
     def forward(self, x):
-        x = self.sig(self.conv1(x))
-        x = F.avg_pool2d(x, 2, 2)
-        x = self.sig(self.conv2(x))
-        x = F.avg_pool2d(x, 2, 2)
-        x = self.sig(self.conv3(x))
-        x = x.view(-1, 120*57*57)
-        x = self.sig(self.fc1(x))
-        x = self.fc2(x)
-        return F.softmax(x, dim=1)
+        x = self.model(x)
+        return  self.sig(x)
 
 class Generator(nn.Module):
     def __init__(self):
         super(Generator,self).__init__()
-        self.conv1 = nn.Conv2d(3, 6, 3, 1, 1)
-        self.conv2 = nn.Conv2d(6, 16, 3, 1, 1)
-        self.conv3 = nn.Conv2d(16, 3, 3, 1, 1)
+        self.model = models.segmentation.lraspp_mobilenet_v3_large(weights=None)#weights=models.segmentation.LRASPP_MobileNet_V3_Large_Weights.COCO_WITH_VOC_LABELS_V1)
+        self.model.classifier.low_classifier = nn.Conv2d(40, 3, kernel_size=(1, 1), stride=(1, 1))
+        self.model.classifier.high_classifier = nn.Conv2d(128, 3, kernel_size=(1, 1), stride=(1, 1))
         self.sig = nn.Sigmoid()
     def forward(self, x):
-        x = self.sig(self.conv1(x))
-        x = self.sig(self.conv2(x))
-        x = self.sig(self.conv3(x))
+        x = self.model(x)['out']
         return self.sig(x)
-
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 trans = T.Compose([
@@ -358,33 +344,34 @@ c = Cycle(Generator(), Generator(), Discriminator(), Discriminator(), device=dev
 
 c.load_train_dataset('../../apple2orange/train', 
                 class_to_idx={'B':0, 'A':1},
-                shuffle=True, 
+                shuffle=False, 
                 train_trans=trans)
 c.set_loss()
 c.set_optimizer_and_schedulers()
 c.train(epochs=20)
 c.save_model()
+del c
 
-# from PIL import Image
-# img_trans = T.ToPILImage()
+from PIL import Image
+img_trans = T.ToPILImage()
 
-# apple_image = trans(Image.open('../../apple2orange/train/A/n07740461_158.jpg')).to(device)
-# orange_image = trans(Image.open('../../apple2orange/train/B/n07749192_183.jpg')).to(device)
+apple_image = trans(Image.open('../../apple2orange/train/A/n07740461_158.jpg')).to(device)
+orange_image = trans(Image.open('../../apple2orange/train/B/n07749192_183.jpg')).to(device)
 
-# apple_image = apple_image.unsqueeze(0)
-# orange_image = orange_image.unsqueeze(0)
-# test_G_AB = Generator()
-# test_G_BA = Generator()
+apple_image = apple_image.unsqueeze(0)
+orange_image = orange_image.unsqueeze(0)
+test_G_AB = Generator()
+test_G_BA = Generator()
 
-# test_G_AB.load_state_dict(torch.load('./G_AB.pt'))
-# test_G_BA.load_state_dict(torch.load('./G_BA.pt'))
-# test_G_AB.to(device)
-# test_G_BA.to(device)
+test_G_AB.load_state_dict(torch.load('./G_AB.pt'))
+test_G_BA.load_state_dict(torch.load('./G_BA.pt'))
+test_G_AB.to(device)
+test_G_BA.to(device)
 
-# fake_orange_image = test_G_AB(apple_image).squeeze()
-# fake_orange_image = img_trans(fake_orange_image)
-# fake_orange_image.save('./fake_orange.jpg')
+fake_orange_image = test_G_AB(apple_image).squeeze()
+fake_orange_image = img_trans(fake_orange_image)
+fake_orange_image.save('./fake_orange.jpg')
 
-# fake_apple_image = test_G_BA(orange_image).squeeze()
-# fake_apple_image = img_trans(fake_apple_image)
-# fake_apple_image.save('./fake_apple.jpg')
+fake_apple_image = test_G_BA(orange_image).squeeze()
+fake_apple_image = img_trans(fake_apple_image)
+fake_apple_image.save('./fake_apple.jpg')
