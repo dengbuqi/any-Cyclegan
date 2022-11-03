@@ -317,15 +317,16 @@ class Discriminator(nn.Module):
         self.conv3 = nn.Conv2d(16, 120, kernel_size=5, stride=1)
         self.fc1 = nn.Linear(120*57*57, 84)
         self.fc2 = nn.Linear(84, 1)
+        self.sig = nn.Sigmoid()
 
     def forward(self, x):
-        x = torch.tanh(self.conv1(x))
+        x = self.sig(self.conv1(x))
         x = F.avg_pool2d(x, 2, 2)
-        x = torch.tanh(self.conv2(x))
+        x = self.sig(self.conv2(x))
         x = F.avg_pool2d(x, 2, 2)
-        x = torch.tanh(self.conv3(x))
+        x = self.sig(self.conv3(x))
         x = x.view(-1, 120*57*57)
-        x = torch.tanh(self.fc1(x))
+        x = self.sig(self.fc1(x))
         x = self.fc2(x)
         return F.softmax(x, dim=1)
 
@@ -335,12 +336,12 @@ class Generator(nn.Module):
         self.conv1 = nn.Conv2d(3, 6, 3, 1, 1)
         self.conv2 = nn.Conv2d(6, 16, 3, 1, 1)
         self.conv3 = nn.Conv2d(16, 3, 3, 1, 1)
-
+        self.sig = nn.Sigmoid()
     def forward(self, x):
-        x = torch.tanh(self.conv1(x))
-        x = torch.tanh(self.conv2(x))
-        x = torch.tanh(self.conv3(x))
-        return torch.sigmoid(x)
+        x = self.sig(self.conv1(x))
+        x = self.sig(self.conv2(x))
+        x = self.sig(self.conv3(x))
+        return self.sig(x)
 
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -353,37 +354,37 @@ trans = T.Compose([
     T.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
 ])
 
-# c = Cycle(Generator(), Generator(), Discriminator(), Discriminator(), device=device)
+c = Cycle(Generator(), Generator(), Discriminator(), Discriminator(), device=device)
 
-# c.load_train_dataset('D:\\apple2orange\\train', 
-#                 class_to_idx={'B':0, 'A':1},
-#                 shuffle=True, 
-#                 train_trans=trans)
-# c.set_loss()
-# c.set_optimizer_and_schedulers()
-# c.train(epochs=20)
-# c.save_model()
+c.load_train_dataset('../../apple2orange/train', 
+                class_to_idx={'B':0, 'A':1},
+                shuffle=True, 
+                train_trans=trans)
+c.set_loss()
+c.set_optimizer_and_schedulers()
+c.train(epochs=20)
+c.save_model()
 
-from PIL import Image
-img_trans = T.ToPILImage()
+# from PIL import Image
+# img_trans = T.ToPILImage()
 
-apple_image = trans(Image.open('D:\\apple2orange\\train\\A\\n07740461_158.jpg')).to(device)
-orange_image = trans(Image.open('D:\\apple2orange\\train\\B\\n07749192_183.jpg')).to(device)
+# apple_image = trans(Image.open('../../apple2orange/train/A/n07740461_158.jpg')).to(device)
+# orange_image = trans(Image.open('../../apple2orange/train/B/n07749192_183.jpg')).to(device)
 
-apple_image = apple_image.unsqueeze(0)
-orange_image = orange_image.unsqueeze(0)
-test_G_AB = Generator()
-test_G_BA = Generator()
+# apple_image = apple_image.unsqueeze(0)
+# orange_image = orange_image.unsqueeze(0)
+# test_G_AB = Generator()
+# test_G_BA = Generator()
 
-test_G_AB.load_state_dict(torch.load('.\\G_AB.pt'))
-test_G_BA.load_state_dict(torch.load('.\\G_BA.pt'))
-test_G_AB.to(device)
-test_G_BA.to(device)
+# test_G_AB.load_state_dict(torch.load('./G_AB.pt'))
+# test_G_BA.load_state_dict(torch.load('./G_BA.pt'))
+# test_G_AB.to(device)
+# test_G_BA.to(device)
 
-fake_orange_image = test_G_AB(apple_image).squeeze()
-fake_orange_image = img_trans(fake_orange_image)
-fake_orange_image.save('./fake_orange.jpg')
+# fake_orange_image = test_G_AB(apple_image).squeeze()
+# fake_orange_image = img_trans(fake_orange_image)
+# fake_orange_image.save('./fake_orange.jpg')
 
-fake_apple_image = test_G_BA(orange_image).squeeze()
-fake_apple_image = img_trans(fake_apple_image)
-fake_apple_image.save('./fake_apple.jpg')
+# fake_apple_image = test_G_BA(orange_image).squeeze()
+# fake_apple_image = img_trans(fake_apple_image)
+# fake_apple_image.save('./fake_apple.jpg')
