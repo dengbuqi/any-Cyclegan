@@ -7,6 +7,8 @@ from typing import Any, Callable, cast, Dict, List, Optional, Tuple, Union
 import itertools
 from torch.optim.lr_scheduler import ExponentialLR
 from tqdm import tqdm
+from PIL import Image
+import pathlib, os
 class MyImageFolder(ImageFolder):
     def __init__(
         self,
@@ -34,7 +36,7 @@ class MyImageFolder(ImageFolder):
         else:
             print(f'class_to_idx keys {sorted(class_to_idx.keys())} is not equals to self.classes {sorted(self.classes)}')
 class Cycle:
-    def __init__(self, G_AB, G_BA, D_A=None, D_B=None, is_train=True, device='CPU'):
+    def __init__(self, G_AB, G_BA, D_A=None, D_B=None, is_train=True, log='./log', device='CPU'):
         self.G_AB = G_AB.to(device)
         self.G_BA = G_BA.to(device)
         if is_train:
@@ -47,6 +49,9 @@ class Cycle:
         self.fake_B = None
         self.is_train = is_train
         self.device = device
+        self.log = log
+        pathlib.Path(os.path.join(self.log, 'prediction')).mkdir(parents=True, exist_ok=True)
+        pathlib.Path(os.path.join(self.log, 'weights')).mkdir(parents=True, exist_ok=True)
 
     def load_model(self, G_AB_PATH, G_BA_PATH, D_A_PATH, D_B_PATH):
         self.G_AB.load_state_dict(torch.load(G_AB_PATH))
@@ -111,7 +116,7 @@ class Cycle:
         self.lambda_A = lambda_A
         self.lambda_B = lambda_B
     
-    def set_optimizer_and_schedulers(self, lr=0.0002, beta1 = 0.5, gamma=0.9):
+    def set_optimizer_and_schedulers(self, lr=0.002, beta1 = 0.5, gamma=0.9):
         self.lr = lr
         self.beta1 = beta1
         self.gamma = gamma
@@ -295,40 +300,35 @@ class Cycle:
                 tbar.set_description(f'Epochs:{e+1}/{epochs}| loss_D_A={loss_D_A.item():.2f}, loss_D_B={loss_D_B.item():.2f}, loss_G={loss_G.item():.2f}')
             for sd in self.schedulers:
                 sd.step()
+            self.test(e+1)
+            self.save_model()
 
-    def test(self):
-        pass
+    def test(self, e):
+        img_trans = T.ToPILImage()
+        apple_image = trans(Image.open('/home/deng/data/InBic/data/horse2zebra/test/A/n02381460_490.jpg')).to(device)
+        orange_image = trans(Image.open('/home/deng/data/InBic/data/horse2zebra/test/B/n02391049_440.jpg')).to(device)
 
-    def save_model(self, G_AB_PATH='./G_AB.pt', G_BA_PATH='./G_BA.pt', D_A_PATH='./D_A.pt', D_B_PATH='./D_B.pt'):
+        apple_image = apple_image.unsqueeze(0)
+        orange_image = orange_image.unsqueeze(0)
+
+        fake_orange_image = self.G_AB(apple_image).squeeze()
+        fake_orange_image = img_trans(fake_orange_image)
+        fake_orange_image.save(os.path.join(self.log, 'prediction', f'./fake_B{e}.jpg'))
+
+        fake_apple_image = self.G_BA(orange_image).squeeze()
+        fake_apple_image = img_trans(fake_apple_image)
+        fake_apple_image.save(os.path.join(self.log, 'prediction', f'./fake_A{e}.jpg'))
+
+    def save_model(self):
+        G_AB_PATH=os.path.join(self.log, 'weights', 'G_AB.pt')
+        G_BA_PATH=os.path.join(self.log, 'weights', 'G_BA.pt')
+        D_A_PATH=os.path.join(self.log, 'weights', 'D_A.pt')
+        D_B_PATH=os.path.join(self.log, 'weights', 'D_B.pt')
         torch.save(self.G_AB.state_dict(), G_AB_PATH)
         torch.save(self.G_BA.state_dict(), G_BA_PATH)
         if self.is_train:
             torch.save(self.D_A.state_dict(), D_A_PATH)
             torch.save(self.D_B.state_dict(), D_B_PATH)
-
-
-from torchvision import models
-
-class Discriminator(nn.Module):
-    def __init__(self):
-        super(Discriminator,self).__init__()
-        self.model = models.resnet18(weights=None)#weights=models.ResNet18_Weights.DEFAULT)
-        self.model.fc = torch.nn.Linear(self.model.fc.in_features, 1)
-        self.sig = nn.Sigmoid()
-    def forward(self, x):
-        x = self.model(x)
-        return  self.sig(x)
-
-class Generator(nn.Module):
-    def __init__(self):
-        super(Generator,self).__init__()
-        self.model = models.segmentation.lraspp_mobilenet_v3_large(weights=None)#weights=models.segmentation.LRASPP_MobileNet_V3_Large_Weights.COCO_WITH_VOC_LABELS_V1)
-        self.model.classifier.low_classifier = nn.Conv2d(40, 3, kernel_size=(1, 1), stride=(1, 1))
-        self.model.classifier.high_classifier = nn.Conv2d(128, 3, kernel_size=(1, 1), stride=(1, 1))
-        self.sig = nn.Sigmoid()
-    def forward(self, x):
-        x = self.model(x)['out']
-        return self.sig(x)
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 trans = T.Compose([
@@ -339,12 +339,17 @@ trans = T.Compose([
     # normalize
     T.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
 ])
+from pix2pix import generator, discriminator
+c = Cycle(generator(), 
+        generator(), 
+        discriminator(), 
+        discriminator(), 
+        device=device,
+        log='/home/deng/data/InBic/data/log')
 
-c = Cycle(Generator(), Generator(), Discriminator(), Discriminator(), device=device)
-
-c.load_train_dataset('../../apple2orange/train', 
+c.load_train_dataset('/home/deng/data/InBic/data/horse2zebra/train', 
                 class_to_idx={'B':0, 'A':1},
-                shuffle=False, 
+                shuffle=True, 
                 train_trans=trans)
 c.set_loss()
 c.set_optimizer_and_schedulers()
@@ -352,26 +357,25 @@ c.train(epochs=20)
 c.save_model()
 del c
 
-from PIL import Image
-img_trans = T.ToPILImage()
+# img_trans = T.ToPILImage()
 
-apple_image = trans(Image.open('../../apple2orange/train/A/n07740461_158.jpg')).to(device)
-orange_image = trans(Image.open('../../apple2orange/train/B/n07749192_183.jpg')).to(device)
+# apple_image = trans(Image.open('../../apple2orange/train/A/n07740461_158.jpg')).to(device)
+# orange_image = trans(Image.open('../../apple2orange/train/B/n07749192_183.jpg')).to(device)
 
-apple_image = apple_image.unsqueeze(0)
-orange_image = orange_image.unsqueeze(0)
-test_G_AB = Generator()
-test_G_BA = Generator()
+# apple_image = apple_image.unsqueeze(0)
+# orange_image = orange_image.unsqueeze(0)
+# test_G_AB = generator()
+# test_G_BA = generator()
 
-test_G_AB.load_state_dict(torch.load('./G_AB.pt'))
-test_G_BA.load_state_dict(torch.load('./G_BA.pt'))
-test_G_AB.to(device)
-test_G_BA.to(device)
+# test_G_AB.load_state_dict(torch.load('./G_AB.pt'))
+# test_G_BA.load_state_dict(torch.load('./G_BA.pt'))
+# test_G_AB.to(device)
+# test_G_BA.to(device)
 
-fake_orange_image = test_G_AB(apple_image).squeeze()
-fake_orange_image = img_trans(fake_orange_image)
-fake_orange_image.save('./fake_orange.jpg')
+# fake_orange_image = test_G_AB(apple_image).squeeze()
+# fake_orange_image = img_trans(fake_orange_image)
+# fake_orange_image.save('./fake_orange.jpg')
 
-fake_apple_image = test_G_BA(orange_image).squeeze()
-fake_apple_image = img_trans(fake_apple_image)
-fake_apple_image.save('./fake_apple.jpg')
+# fake_apple_image = test_G_BA(orange_image).squeeze()
+# fake_apple_image = img_trans(fake_apple_image)
+# fake_apple_image.save('./fake_apple.jpg')
